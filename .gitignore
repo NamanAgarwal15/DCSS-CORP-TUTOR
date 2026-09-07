@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Next.js build output & generated files
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# Environment files — never commit real secrets
+.env
+.env.local
+.env*.local
+
+# Database (local SQLite)
+prisma/dev.db
+prisma/dev.db-journal
+*.db
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+
+# Auto-generated AI-agent files (recreated by the Next.js dev server on boot)
+AGENTS.md
+CLAUDE.md

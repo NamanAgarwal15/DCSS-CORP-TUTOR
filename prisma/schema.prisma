@@ -1,0 +1,37 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Group {
+  id     String  @id @default(cuid())
+  name   String
+  slug   String  @unique
+  entries Entry[]
+  promptLogs PromptLog[]
+}
+
+model Entry {
+  id        String   @id @default(cuid())
+  groupId   String
+  group     Group    @relation(fields: [groupId], references: [id])
+  type      String // REFLECTION | NEWS_UPDATE | STUDENT_NOTE
+  content   String // JSON-serialized structured content
+  createdAt DateTime @default(now())
+  promptLogs PromptLog[]
+}
+
+model PromptLog {
+  id        String   @id @default(cuid())
+  groupId   String
+  group     Group    @relation(fields: [groupId], references: [id])
+  entryId   String?
+  entry     Entry?   @relation(fields: [entryId], references: [id])
+  role      String // STUDENT | AI
+  content   String
+  createdAt DateTime @default(now())
+}
