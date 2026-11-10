@@ -1,9 +1,13 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { requireFaculty } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
-export default async function InstructorPage() {
+export default async function FacultyPage() {
+  if (!(await requireFaculty())) redirect("/faculty/login");
+
   const groups = await prisma.group.findMany({
     orderBy: { name: "asc" },
     include: { _count: { select: { entries: true } } },
@@ -17,16 +21,10 @@ export default async function InstructorPage() {
             ← Home
           </Link>
         </p>
-        <h1 className="text-2xl font-bold text-gray-900 mb-6">Instructor — All Groups</h1>
+        <h1 className="text-2xl font-bold text-gray-900 mb-6">Faculty — All Groups</h1>
 
         {groups.length === 0 ? (
-          <p className="text-gray-500">
-            No groups yet. Create one from the{" "}
-            <Link href="/" className="text-blue-600 hover:underline">
-              home page
-            </Link>
-            .
-          </p>
+          <p className="text-gray-500">No groups yet.</p>
         ) : (
           <ul className="space-y-3">
             {groups.map((g) => (

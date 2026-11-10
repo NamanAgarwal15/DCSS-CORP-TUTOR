@@ -8,6 +8,8 @@ import {
   extractGroundingSources,
   type NewsItem,
 } from "@/lib/gemini";
+import { requireGroupAccess } from "@/lib/auth";
+import { badJson, MAX, rateLimited, readJson, str, studentNameOf, unauthorized } from "@/lib/http";
 
 // NEWS_MODE: "grounded" = live Google Search grounding; "manual" = student
 // pastes news text, Gemini parses it. Defaults to "manual" if unset.
@@ -177,10 +179,11 @@ async function getManualNews(pastedText: string): Promise<NewsSuccess | NewsFail
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    const groupId = typeof body?.groupId === "string" ? body.groupId : "";
-    const studentPrompt =
-      typeof body?.studentPrompt === "string" ? body.studentPrompt.trim() : "";
+    const body = await readJson(req);
+    if (!body) return badJson();
+    const groupId = str(body, "groupId");
+    const studentPrompt = str(body, "studentPrompt");
+    const studentName = studentNameOf(body);
 
     if (!groupId || !studentPrompt) {
       return NextResponse.json(
@@ -188,6 +191,15 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
+    if (!(await requireGroupAccess(groupId))) return unauthorized();
+    if (studentPrompt.length > MAX.newsPaste) {
+      return NextResponse.json(
+        { error: `News text must be at most ${MAX.newsPaste} characters` },
+        { status: 400 }
+      );
+    }
+    const limited = rateLimited(req, "gemini", 5, 60_000);
+    if (limited) return limited;
 
     const group = await prisma.group.findUnique({ where: { id: groupId } });
     if (!group) {
@@ -203,18 +215,22 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: result.error }, { status: result.status });
     }
 
-    const entry = await prisma.entry.create({
-      data: {
-        groupId,
-        type: "NEWS_UPDATE",
-        content: JSON.stringify(result.structured),
-      },
-    });
-    await prisma.promptLog.createMany({
-      data: [
-        { groupId, entryId: entry.id, role: "STUDENT", content: studentPrompt },
-        { groupId, entryId: entry.id, role: "AI", content: result.raw },
-      ],
+    const entry = await prisma.$transaction(async (tx) => {
+      const created = await tx.entry.create({
+        data: {
+          groupId,
+          type: "NEWS_UPDATE",
+          content: JSON.stringify(result.structured),
+          studentName,
+        },
+      });
+      await tx.promptLog.createMany({
+        data: [
+          { groupId, entryId: created.id, role: "STUDENT", content: studentPrompt, studentName },
+          { groupId, entryId: created.id, role: "AI", content: result.raw },
+        ],
+      });
+      return created;
     });
 
     return NextResponse.json({ entryId: entry.id, newsUpdate: result.structured });

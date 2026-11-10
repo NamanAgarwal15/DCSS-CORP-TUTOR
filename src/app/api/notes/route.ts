@@ -1,14 +1,25 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireGroupAccess } from "@/lib/auth";
+import { badJson, MAX, readJson, str, studentNameOf, unauthorized } from "@/lib/http";
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    const groupId = typeof body?.groupId === "string" ? body.groupId : "";
-    const content = typeof body?.content === "string" ? body.content.trim() : "";
+    const body = await readJson(req);
+    if (!body) return badJson();
+    const groupId = str(body, "groupId");
+    const content = str(body, "content");
+    const studentName = studentNameOf(body);
 
     if (!groupId || !content) {
       return NextResponse.json({ error: "groupId and content are required" }, { status: 400 });
+    }
+    if (!(await requireGroupAccess(groupId))) return unauthorized();
+    if (content.length > MAX.note) {
+      return NextResponse.json(
+        { error: `Note must be at most ${MAX.note} characters` },
+        { status: 400 }
+      );
     }
 
     const group = await prisma.group.findUnique({ where: { id: groupId } });
@@ -21,6 +32,7 @@ export async function POST(req: Request) {
         groupId,
         type: "STUDENT_NOTE",
         content: JSON.stringify({ text: content }),
+        studentName,
       },
     });
 

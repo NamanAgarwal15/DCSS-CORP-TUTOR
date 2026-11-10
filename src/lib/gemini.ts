@@ -6,7 +6,9 @@ import { GoogleGenerativeAI, type Tool } from "@google/generative-ai";
 // verified working (plain + grounded) against this key.
 const MODEL_NAME = "gemini-3.6-flash";
 
-export const GOOGLE_SEARCH_TOOL: Tool[] = [{ googleSearch: {} }];
+// Type-only cast: SDK 0.24.1's Tool type predates the `googleSearch` field the
+// API now expects. The object sent at runtime is unchanged.
+export const GOOGLE_SEARCH_TOOL = [{ googleSearch: {} }] as unknown as Tool[];
 
 function getClient(): GoogleGenerativeAI {
   const apiKey = process.env.GEMINI_API_KEY;

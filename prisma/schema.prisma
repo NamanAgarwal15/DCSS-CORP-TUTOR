@@ -3,35 +3,44 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
 model Group {
-  id     String  @id @default(cuid())
-  name   String
-  slug   String  @unique
-  entries Entry[]
-  promptLogs PromptLog[]
+  id           String      @id @default(cuid())
+  name         String
+  slug         String      @unique
+  passcodeHash String
+  createdAt    DateTime    @default(now())
+  entries      Entry[]
+  promptLogs   PromptLog[]
 }
 
 model Entry {
-  id        String   @id @default(cuid())
-  groupId   String
-  group     Group    @relation(fields: [groupId], references: [id])
-  type      String // REFLECTION | NEWS_UPDATE | STUDENT_NOTE
-  content   String // JSON-serialized structured content
-  createdAt DateTime @default(now())
-  promptLogs PromptLog[]
+  id          String      @id @default(cuid())
+  groupId     String
+  group       Group       @relation(fields: [groupId], references: [id])
+  type        String // REFLECTION | NEWS_UPDATE | STUDENT_NOTE
+  content     String // JSON-serialized structured content
+  studentName String? // name typed on the landing page; null for older rows
+  createdAt   DateTime    @default(now())
+  promptLogs  PromptLog[]
+
+  @@index([groupId])
 }
 
 model PromptLog {
-  id        String   @id @default(cuid())
-  groupId   String
-  group     Group    @relation(fields: [groupId], references: [id])
-  entryId   String?
-  entry     Entry?   @relation(fields: [entryId], references: [id])
-  role      String // STUDENT | AI
-  content   String
-  createdAt DateTime @default(now())
+  id          String   @id @default(cuid())
+  groupId     String
+  group       Group    @relation(fields: [groupId], references: [id])
+  entryId     String?
+  entry       Entry?   @relation(fields: [entryId], references: [id])
+  role        String // STUDENT | AI
+  content     String
+  studentName String? // set on STUDENT rows; null for AI rows and older rows
+  createdAt   DateTime @default(now())
+
+  @@index([groupId])
+  @@index([entryId])
 }

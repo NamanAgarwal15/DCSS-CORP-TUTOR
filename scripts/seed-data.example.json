@@ -1,0 +1,24 @@
+{
+  "groupSlug": "REPLACE_WITH_GROUP_SLUG",
+  "items": [
+    {
+      "type": "REFLECTION",
+      "createdAt": "2000-01-01T10:00:00.000Z",
+      "classSummary": "PLACEHOLDER class summary text. Replace with what was covered.",
+      "unclearQuestion": "PLACEHOLDER question the group could not get clarified?",
+      "keyPoints": ["PLACEHOLDER key point one", "PLACEHOLDER key point two", "PLACEHOLDER key point three"]
+    },
+    {
+      "type": "NEWS_UPDATE",
+      "pastedText": "PLACEHOLDER pasted news text from Example Corp. See https://example.com/placeholder-news",
+      "items": [
+        {
+          "source": "Example Corp (placeholder)",
+          "url": "https://example.com/placeholder-news",
+          "summary": "PLACEHOLDER summary of the news item.",
+          "whyItMatters": "PLACEHOLDER reason this matters for corporate-startup collaboration."
+        }
+      ]
+    }
+  ]
+}
