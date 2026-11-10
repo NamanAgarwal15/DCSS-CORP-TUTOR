@@ -8,9 +8,9 @@
  * (create it in the app first, with its passcode), found by "groupSlug" or by
  * its exact "groupName". Rows are written exactly like the live API writes
  * them — same Entry.content shape and the same STUDENT/AI PromptLog pairs — so
- * seeded history looks like normal history. Optional per item: "studentName",
- * and for reflections "tutorReply" + "followUps" and a "thread" of follow-up
- * exchanges. See scripts/seed-data.example.json for the format.
+ * seeded history looks like normal history. Optional per item: "studentName";
+ * for reflections "tutorReply" + "followUps"; and for reflections and news
+ * updates a "thread" of follow-up exchanges. See scripts/seed-data.example.json for the format.
  *
  * Everything is validated first; nothing is written unless the whole file is
  * valid. A group that already has entries is refused unless --append is given,
@@ -68,6 +68,30 @@ function turn(obj: unknown, where: string): TutorTurn {
   }
 }
 
+/** Follow-up exchanges after an entry: each becomes a STUDENT/AI log pair, strictly in time order. */
+function planThread(item: Record<string, unknown>, createdAt: Date, where: string): PlannedLog[] {
+  if (item.thread === undefined) return [];
+  if (!Array.isArray(item.thread)) fail(`${where}: "thread" must be an array`);
+  const logs: PlannedLog[] = [];
+  let last = createdAt;
+  item.thread.forEach((t: unknown, j: number) => {
+    const w = `${where}.thread[${j}]`;
+    if (typeof t !== "object" || t === null) fail(`${w} is not an object`);
+    const th = t as Record<string, unknown>;
+    // Default: one minute after the previous turn, so order is stable.
+    const at = date(th, new Date(last.getTime() + 60_000), w);
+    if (at <= last) fail(`${w}: createdAt must be after the previous turn`);
+    last = at;
+    const question = text(th, "question", MAX.reflectionField - 1, w);
+    const reply = turn(th, w);
+    logs.push(
+      { role: "STUDENT", content: question, studentName: optName(th, w), createdAt: at },
+      { role: "AI", content: JSON.stringify(reply), studentName: null, createdAt: at }
+    );
+  });
+  return logs;
+}
+
 function plan(raw: unknown, i: number, now: Date): Planned {
   const where = `items[${i}]`;
   if (typeof raw !== "object" || raw === null) fail(`${where} is not an object`);
@@ -98,26 +122,8 @@ function plan(raw: unknown, i: number, now: Date): Planned {
         { role: "AI", content: JSON.stringify(conv ? { keyPoints: reflection.keyPoints, ...conv } : { keyPoints: reflection.keyPoints }), studentName: null, createdAt },
       ];
 
-      if (item.thread !== undefined) {
-        if (!conv) fail(`${where}: "thread" needs tutorReply and followUps on the reflection`);
-        if (!Array.isArray(item.thread)) fail(`${where}: "thread" must be an array`);
-        let last = createdAt;
-        item.thread.forEach((t: unknown, j: number) => {
-          const w = `${where}.thread[${j}]`;
-          if (typeof t !== "object" || t === null) fail(`${w} is not an object`);
-          const th = t as Record<string, unknown>;
-          // Default: one minute after the previous turn, so order is stable.
-          const at = date(th, new Date(last.getTime() + 60_000), w);
-          if (at <= last) fail(`${w}: createdAt must be after the previous turn`);
-          last = at;
-          const question = text(th, "question", MAX.reflectionField - 1, w);
-          const reply = turn(th, w);
-          logs.push(
-            { role: "STUDENT", content: question, studentName: optName(th, w), createdAt: at },
-            { role: "AI", content: JSON.stringify(reply), studentName: null, createdAt: at }
-          );
-        });
-      }
+      if (item.thread !== undefined && !conv) fail(`${where}: "thread" needs tutorReply and followUps on the reflection`);
+      logs.push(...planThread(item, createdAt, where));
       return { type: "REFLECTION", createdAt, content: JSON.stringify(content), studentName, logs };
     }
     case "NEWS_UPDATE": {
@@ -140,6 +146,7 @@ function plan(raw: unknown, i: number, now: Date): Planned {
         logs: [
           { role: "STUDENT", content: pastedText, studentName, createdAt },
           { role: "AI", content: JSON.stringify(items), studentName: null, createdAt },
+          ...planThread(item, createdAt, where),
         ],
       };
     }

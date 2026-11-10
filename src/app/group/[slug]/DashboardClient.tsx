@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { formatDate, formatDay, formatWeekKey, istWeekKey } from "@/lib/formatDate";
+import { formatDate, formatDay, istWeekKey } from "@/lib/formatDate";
 import { parseReflectionInput } from "@/lib/reflection";
 import BackButton from "@/components/BackButton";
 
@@ -318,9 +318,22 @@ function personStyles(feed: FeedItem[]): (name: string | null) => Person {
   return (name) => (name && order.includes(name) ? PEOPLE[order.indexOf(name) % PEOPLE.length] : NO_NAME);
 }
 
-type SessionBlock = { key: string; title: string; subtitle: string; items: FeedItem[]; people: [string, number][] };
+type SessionBlock = {
+  key: string;
+  news: boolean;
+  title: string;
+  subtitle: string;
+  questions: number;
+  items: FeedItem[];
+  people: [string, number][];
+};
 
-/** Group the feed into weekly blocks; a block is titled by the "Session N" its class summary names. */
+/**
+ * Group the feed into weekly working sessions (the group meets once a week to
+ * use the app). A week containing a news update is a "Fortnightly News Session";
+ * otherwise it is a "Group Study Session", subtitled with the topic named at the
+ * start of its class summary (e.g. "Topic 2: …").
+ */
 function buildSessions(feed: FeedItem[]): SessionBlock[] {
   const byWeek = new Map<string, FeedItem[]>();
   for (const it of feed) {
@@ -328,8 +341,9 @@ function buildSessions(feed: FeedItem[]): SessionBlock[] {
     byWeek.set(k, [...(byWeek.get(k) ?? []), it]);
   }
   return [...byWeek.entries()].map(([key, items]) => {
-    const sessions = new Set<number>();
-    let classAt: string | null = null;
+    const topics: string[] = [];
+    let news = false;
+    let questions = 0;
     const counts = new Map<string, number>();
     const bump = (n: string | null) => {
       if (n) counts.set(n, (counts.get(n) ?? 0) + 1);
@@ -337,21 +351,27 @@ function buildSessions(feed: FeedItem[]): SessionBlock[] {
     for (const it of items) {
       if (it.kind === "turn") {
         it.student.forEach((l) => bump(l.studentName));
+        questions += it.student.length;
+        if (it.entry.type === "NEWS_UPDATE") news = true;
         if (it.entry.type === "REFLECTION") {
           const input = it.student[0] ? parseReflectionInput(it.student[0].content) : null;
-          const m = input?.summary.match(/^\s*Session\s+(\d+)/i);
-          if (m) sessions.add(Number(m[1]));
-          classAt ??= it.entry.createdAt;
+          const m = input?.summary.match(/^\s*((?:Topic\s+\d+|Revision)[^:]*):\s*([^.]+)/i);
+          if (m && !topics.includes(`${m[1]} · ${m[2]}`)) topics.push(`${m[1]} · ${m[2]}`);
         }
       } else if (it.kind === "note") bump(it.entry.studentName);
-      else if (it.log.role === "STUDENT") bump(it.log.studentName);
+      else if (it.log.role === "STUDENT") {
+        bump(it.log.studentName);
+        questions += 1;
+      }
     }
-    const nums = [...sessions].sort((a, b) => a - b);
-    const week = `Week of ${formatWeekKey(key)}`;
+    // Sessions cluster on one day; the first item's day dates the block.
+    const day = formatDay(items[0].at);
     return {
       key,
-      title: nums.length ? `Session${nums.length > 1 ? "s" : ""} ${nums.join(", ")}` : week,
-      subtitle: nums.length && classAt ? `Class of ${formatDay(classAt)}` : nums.length ? week : "",
+      news,
+      title: `${news ? "Fortnightly News Session" : "Group Study Session"}: ${day}`,
+      subtitle: news ? "Corporate-startup collaboration digest" : topics.join(" / "),
+      questions,
       items,
       people: [...counts.entries()],
     };
@@ -468,8 +488,9 @@ export default function DashboardClient({
         content = null;
       }
     }
+    const canFollowUp = isReflection || item.entry.type === "NEWS_UPDATE";
     let suggestions: string[] = [];
-    if (isReflection) {
+    if (canFollowUp) {
       const lastTurn = laterAi.length ? parseTurn(laterAi[laterAi.length - 1].content) : null;
       suggestions = lastTurn?.followUps ?? content?.followUps ?? [];
       // Hide suggestions the group has already asked in this thread.
@@ -506,7 +527,7 @@ export default function DashboardClient({
                 <QuestionCard
                   name={firstStudent.studentName}
                   person={styleFor(firstStudent.studentName)}
-                  action="pasted news for the fortnightly update"
+                  action="started the fortnightly news update"
                   at={firstStudent.createdAt}
                   text={firstStudent.content}
                 />
@@ -543,7 +564,7 @@ export default function DashboardClient({
             </div>
           </details>
         )}
-        {isReflection && (
+        {canFollowUp && (
           <FollowUpBox
             suggestions={suggestions}
             disabled={!!busy}
@@ -736,10 +757,25 @@ export default function DashboardClient({
         )}
         <div className="space-y-8">
           {sessions.map((block) => (
-            <section key={block.key} className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-              <header className="bg-slate-800 px-4 py-3 text-white flex flex-wrap items-center gap-x-3 gap-y-2">
+            <section
+              key={block.key}
+              className={`rounded-xl border shadow-sm overflow-hidden ${block.news ? "border-blue-300 bg-white" : "border-gray-200 bg-white"}`}
+            >
+              <header
+                className={`px-4 py-3 text-white flex flex-wrap items-center gap-x-3 gap-y-2 ${block.news ? "bg-blue-800" : "bg-slate-800"}`}
+              >
+                {block.news && (
+                  <span className="text-[11px] font-bold uppercase tracking-wide px-2 py-0.5 rounded bg-white text-blue-800">
+                    News
+                  </span>
+                )}
                 <h3 className="text-base font-semibold">{block.title}</h3>
-                {block.subtitle && <span className="text-sm text-slate-300">{block.subtitle}</span>}
+                {block.subtitle && (
+                  <span className={`text-sm ${block.news ? "text-blue-100" : "text-slate-300"}`}>{block.subtitle}</span>
+                )}
+                <span className={`text-xs ${block.news ? "text-blue-100" : "text-slate-300"}`}>
+                  {block.questions} question{block.questions === 1 ? "" : "s"}
+                </span>
                 <span className="sm:ml-auto flex flex-wrap gap-1.5">
                   {block.people.map(([name, n]) => (
                     <span key={name} className={`text-xs font-medium px-2 py-0.5 rounded-full ${styleFor(name).chip}`}>

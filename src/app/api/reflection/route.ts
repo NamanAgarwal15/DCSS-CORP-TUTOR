@@ -93,7 +93,7 @@ const shapeFailed = () =>
     { status: 502 }
   );
 
-/** A follow-up turn on an existing reflection: stored as a STUDENT/AI log pair on that entry. */
+/** A follow-up turn on an existing reflection or news update: stored as a STUDENT/AI log pair on that entry. */
 async function followUpTurn(req: Request, groupId: string, entryId: string, followUp: string, studentName: string | null) {
   if (followUp.length >= MAX.reflectionField) {
     return NextResponse.json(
@@ -108,8 +108,9 @@ async function followUpTurn(req: Request, groupId: string, entryId: string, foll
     where: { id: entryId },
     include: { promptLogs: { orderBy: { createdAt: "asc" } } },
   });
-  if (!entry || entry.groupId !== groupId || entry.type !== "REFLECTION") {
-    return NextResponse.json({ error: "Reflection not found" }, { status: 404 });
+  // Follow-ups continue a reflection or a fortnightly news update.
+  if (!entry || entry.groupId !== groupId || (entry.type !== "REFLECTION" && entry.type !== "NEWS_UPDATE")) {
+    return NextResponse.json({ error: "Entry not found" }, { status: 404 });
   }
 
   // Original question + tutor reply, then each later student/tutor exchange.
