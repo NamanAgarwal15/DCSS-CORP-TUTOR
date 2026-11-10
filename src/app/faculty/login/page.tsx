@@ -1,5 +1,6 @@
 "use client";
 
+import BackButton from "@/components/BackButton";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -33,6 +34,7 @@ export default function FacultyLogin() {
   return (
     <main className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
       <form onSubmit={submit} className="w-full max-w-sm bg-white rounded-lg shadow p-6 space-y-4">
+        <BackButton href="/" label="Home" />
         <h1 className="text-lg font-semibold text-gray-900">Faculty login</h1>
         <input
           type="text"

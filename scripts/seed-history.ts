@@ -1,7 +1,7 @@
 /*
  * Seed-history importer.
  *
- *   npx tsx scripts/seed-history.ts [path/to/data.json] [--append]
+ *   npx tsx scripts/seed-history.ts [path/to/data.json] [--append | --replace]
  *   (default file: scripts/seed-data.json)
  *
  * Loads past reflections, news updates and notes into an EXISTING group
@@ -15,6 +15,9 @@
  * Everything is validated first; nothing is written unless the whole file is
  * valid. A group that already has entries is refused unless --append is given,
  * so running the script twice does not silently duplicate history.
+ * --replace instead removes that ONE group's existing entries and prompt logs
+ * (the group, its slug and passcode are kept) and writes the file in the same
+ * transaction — if anything fails, the old history is left untouched.
  */
 import { readFileSync } from "fs";
 import { PrismaClient } from "@prisma/client";
@@ -152,6 +155,8 @@ function plan(raw: unknown, i: number, now: Date): Planned {
 async function main() {
   const args = process.argv.slice(2);
   const append = args.includes("--append");
+  const replace = args.includes("--replace");
+  if (append && replace) fail("use either --append or --replace, not both");
   const file = args.find((a) => !a.startsWith("--")) ?? "scripts/seed-data.json";
   let data: { groupSlug?: unknown; groupName?: unknown; items?: unknown };
   try {
@@ -178,12 +183,19 @@ async function main() {
     if (matches.length === 0) fail(`no group with ${target} — create it in the app first`);
     if (matches.length > 1) fail(`more than one group has ${target} — use "groupSlug" instead`);
     const group = matches[0];
-    if (group._count.entries > 0 && !append) {
-      fail(`group "${group.name}" already has ${group._count.entries} entries — pass --append to add anyway`);
+    if (group._count.entries > 0 && !append && !replace) {
+      fail(
+        `group "${group.name}" already has ${group._count.entries} entries — pass --append to add anyway, or --replace to swap them out`
+      );
     }
 
     await prisma.$transaction(
       async (tx) => {
+        if (replace) {
+          const logs = await tx.promptLog.deleteMany({ where: { groupId: group.id } });
+          const entries = await tx.entry.deleteMany({ where: { groupId: group.id } });
+          console.log(`seed-history: --replace removed ${entries.count} entries and ${logs.count} prompt logs from "${group.name}"`);
+        }
         for (const p of planned) {
           const entry = await tx.entry.create({
             data: { groupId: group.id, type: p.type, content: p.content, studentName: p.studentName, createdAt: p.createdAt },

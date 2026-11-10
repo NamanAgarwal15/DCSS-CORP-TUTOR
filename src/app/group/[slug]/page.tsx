@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { requireGroupAccess } from "@/lib/auth";
+import { requireFaculty, requireGroupAccess } from "@/lib/auth";
 import DashboardClient from "./DashboardClient";
 import PasscodeGate from "./PasscodeGate";
 
@@ -29,8 +29,14 @@ export default async function GroupPage({
   });
   if (!group) notFound();
 
+  // Faculty came from the all-groups list; students came from the home page.
+  const back = (await requireFaculty())
+    ? { href: "/faculty", label: "All groups" }
+    : { href: "/", label: "Home" };
+
   return (
     <DashboardClient
+      back={back}
       group={{ id: group.id, name: group.name, slug: group.slug }}
       newsMode={process.env.NEWS_MODE === "grounded" ? "grounded" : "manual"}
       entries={group.entries.map((e) => ({

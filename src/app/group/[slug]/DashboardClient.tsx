@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { formatDate } from "@/lib/formatDate";
+import { formatDate, formatDay, formatWeekKey, istWeekKey } from "@/lib/formatDate";
+import { parseReflectionInput } from "@/lib/reflection";
+import BackButton from "@/components/BackButton";
 
 type EntryDTO = {
   id: string;
@@ -54,11 +56,15 @@ function parseTurn(raw: string): TutorTurn | null {
 
 function TutorBubble({ text }: { text: string }) {
   return (
-    <div className="rounded-lg p-3 text-sm border bg-purple-50 border-purple-200">
-      <span className="text-xs font-semibold px-2 py-0.5 rounded bg-purple-200 text-purple-900">
-        Tutor
-      </span>
-      <p className="mt-2 whitespace-pre-wrap text-gray-800">{text}</p>
+    <div className="ml-6 sm:ml-10 rounded-lg p-3 text-sm border bg-purple-50 border-purple-200">
+      <div className="flex items-center gap-2 mb-1">
+        <span className="h-6 w-6 rounded-full bg-purple-600 text-white text-[10px] font-bold flex items-center justify-center">
+          AI
+        </span>
+        <span className="text-sm font-semibold text-purple-900">Tutor</span>
+        <span className="text-xs text-purple-700">answered</span>
+      </div>
+      <p className="whitespace-pre-wrap text-gray-800">{text}</p>
     </div>
   );
 }
@@ -226,13 +232,13 @@ function PromptLogCard({ log }: { log: PromptLogDTO }) {
   return (
     <div
       className={`rounded-lg p-3 text-sm border ${
-        isStudent ? "bg-gray-50 border-gray-200" : "bg-amber-50 border-amber-200"
+        isStudent ? "bg-gray-50 border-gray-200" : "bg-white border-gray-300"
       }`}
     >
       <div className="flex items-center justify-between mb-1">
         <span
           className={`text-xs font-semibold px-2 py-0.5 rounded ${
-            isStudent ? "bg-gray-200 text-gray-700" : "bg-amber-200 text-amber-900"
+            isStudent ? "bg-gray-200 text-gray-700" : "bg-gray-700 text-white"
           }`}
         >
           {isStudent ? `Prompt · ${log.studentName ?? "STUDENT"}` : "Response · AI"}
@@ -287,16 +293,150 @@ function buildFeed(entries: EntryDTO[], promptLogs: PromptLogDTO[]): FeedItem[] 
   return items.sort((a, b) => a.at.localeCompare(b.at));
 }
 
+// ---- Session grouping (frontend only; no schema involved) -------------------
+
+type Person = { chip: string; dot: string; stripe: string };
+// Full class strings so Tailwind picks them up.
+const PEOPLE: Person[] = [
+  { chip: "bg-rose-100 text-rose-800", dot: "bg-rose-500", stripe: "border-l-rose-400" },
+  { chip: "bg-sky-100 text-sky-800", dot: "bg-sky-600", stripe: "border-l-sky-500" },
+  { chip: "bg-emerald-100 text-emerald-800", dot: "bg-emerald-600", stripe: "border-l-emerald-500" },
+  { chip: "bg-orange-100 text-orange-800", dot: "bg-orange-500", stripe: "border-l-orange-400" },
+  { chip: "bg-indigo-100 text-indigo-800", dot: "bg-indigo-500", stripe: "border-l-indigo-400" },
+];
+const NO_NAME: Person = { chip: "bg-gray-200 text-gray-700", dot: "bg-gray-400", stripe: "border-l-gray-300" };
+
+/** Colour per student, assigned in order of first appearance so it is stable on server and client. */
+function personStyles(feed: FeedItem[]): (name: string | null) => Person {
+  const order: string[] = [];
+  const see = (n: string | null) => n && !order.includes(n) && order.push(n);
+  for (const it of feed) {
+    if (it.kind === "turn") it.student.forEach((l) => see(l.studentName));
+    else if (it.kind === "note") see(it.entry.studentName);
+    else see(it.log.studentName);
+  }
+  return (name) => (name && order.includes(name) ? PEOPLE[order.indexOf(name) % PEOPLE.length] : NO_NAME);
+}
+
+type SessionBlock = { key: string; title: string; subtitle: string; items: FeedItem[]; people: [string, number][] };
+
+/** Group the feed into weekly blocks; a block is titled by the "Session N" its class summary names. */
+function buildSessions(feed: FeedItem[]): SessionBlock[] {
+  const byWeek = new Map<string, FeedItem[]>();
+  for (const it of feed) {
+    const k = istWeekKey(it.at);
+    byWeek.set(k, [...(byWeek.get(k) ?? []), it]);
+  }
+  return [...byWeek.entries()].map(([key, items]) => {
+    const sessions = new Set<number>();
+    let classAt: string | null = null;
+    const counts = new Map<string, number>();
+    const bump = (n: string | null) => {
+      if (n) counts.set(n, (counts.get(n) ?? 0) + 1);
+    };
+    for (const it of items) {
+      if (it.kind === "turn") {
+        it.student.forEach((l) => bump(l.studentName));
+        if (it.entry.type === "REFLECTION") {
+          const input = it.student[0] ? parseReflectionInput(it.student[0].content) : null;
+          const m = input?.summary.match(/^\s*Session\s+(\d+)/i);
+          if (m) sessions.add(Number(m[1]));
+          classAt ??= it.entry.createdAt;
+        }
+      } else if (it.kind === "note") bump(it.entry.studentName);
+      else if (it.log.role === "STUDENT") bump(it.log.studentName);
+    }
+    const nums = [...sessions].sort((a, b) => a - b);
+    const week = `Week of ${formatWeekKey(key)}`;
+    return {
+      key,
+      title: nums.length ? `Session${nums.length > 1 ? "s" : ""} ${nums.join(", ")}` : week,
+      subtitle: nums.length && classAt ? `Class of ${formatDay(classAt)}` : nums.length ? week : "",
+      items,
+      people: [...counts.entries()],
+    };
+  });
+}
+
+function Author({ name, person, action, at }: { name: string | null; person: Person; action: string; at: string }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1">
+      <span className={`h-6 w-6 rounded-full ${person.dot} text-white text-xs font-bold flex items-center justify-center`}>
+        {(name ?? "?").charAt(0).toUpperCase()}
+      </span>
+      <span className="text-sm font-semibold text-gray-900">{name ?? "Student"}</span>
+      <span className="text-xs text-gray-500">{action}</span>
+      <span className="ml-auto text-xs text-gray-500">{formatDate(at)}</span>
+    </div>
+  );
+}
+
+function QuestionCard({ name, person, action, at, text }: { name: string | null; person: Person; action: string; at: string; text: string }) {
+  return (
+    <div className={`rounded-lg border border-gray-200 border-l-4 ${person.stripe} bg-white p-3 text-sm`}>
+      <Author name={name} person={person} action={action} at={at} />
+      <p className="whitespace-pre-wrap text-gray-800">{text}</p>
+    </div>
+  );
+}
+
+function SessionNotesCard({ name, person, at, summary, keyPoints }: { name: string | null; person: Person; at: string; summary: string; keyPoints: string[] }) {
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
+      <div className="mb-1">
+        <span className="text-xs font-semibold px-2 py-0.5 rounded bg-amber-200 text-amber-900">Session notes</span>
+      </div>
+      <Author name={name} person={person} action="shared the class summary" at={at} />
+      <p className="whitespace-pre-wrap text-gray-800">{summary}</p>
+      {keyPoints.length > 0 && (
+        <div className="mt-2 border-t border-amber-200 pt-2">
+          <p className="text-xs font-semibold text-amber-900 mb-1">Key points (AI summary)</p>
+          <ul className="list-disc pl-5 space-y-0.5 text-gray-800">
+            {keyPoints.map((k, i) => (
+              <li key={i}>{k}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NoteItem({ entry, person }: { entry: EntryDTO; person: Person }) {
+  let text = entry.content;
+  try {
+    text = (JSON.parse(entry.content) as NoteContent).text ?? entry.content;
+  } catch {
+    // older or malformed rows: show as stored
+  }
+  return (
+    <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3 text-sm">
+      <Author name={entry.studentName} person={person} action="added a note" at={entry.createdAt} />
+      <p className="whitespace-pre-wrap text-gray-700">{text}</p>
+    </div>
+  );
+}
+
+const LEGEND: [string, string][] = [
+  ["Session notes", "bg-amber-50 border-amber-200 text-amber-900"],
+  ["Student question", "bg-white border-gray-300 border-l-4 border-l-sky-500 text-gray-800"],
+  ["Tutor answer", "bg-purple-50 border-purple-200 text-purple-900"],
+  ["Student note", "bg-slate-50 border-dashed border-slate-300 text-slate-700"],
+  ["News update", "bg-blue-50 border-blue-200 text-blue-900"],
+];
+
 export default function DashboardClient({
   group,
   entries,
   promptLogs,
   newsMode,
+  back,
 }: {
   group: GroupDTO;
   entries: EntryDTO[];
   promptLogs: PromptLogDTO[];
   newsMode: NewsMode;
+  back: { href: string; label: string };
 }) {
   const router = useRouter();
   const [note, setNote] = useState("");
@@ -307,6 +447,113 @@ export default function DashboardClient({
   const [followUpFor, setFollowUpFor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const feed = buildFeed(entries, promptLogs);
+  const sessions = buildSessions(feed);
+  const styleFor = personStyles(feed);
+
+  function renderItem(item: FeedItem) {
+    if (item.kind === "note") {
+      return <NoteItem key={item.entry.id} entry={item.entry} person={styleFor(item.entry.studentName)} />;
+    }
+    if (item.kind === "log") return <PromptLogCard key={item.log.id} log={item.log} />;
+
+    // First student/AI pair is the original turn; later pairs are follow-ups.
+    const [firstStudent, ...laterStudent] = item.student;
+    const [firstAi, ...laterAi] = item.ai;
+    const isReflection = item.entry.type === "REFLECTION";
+    let content: ReflectionContent | null = null;
+    if (isReflection) {
+      try {
+        content = JSON.parse(item.entry.content) as ReflectionContent;
+      } catch {
+        content = null;
+      }
+    }
+    let suggestions: string[] = [];
+    if (isReflection) {
+      const lastTurn = laterAi.length ? parseTurn(laterAi[laterAi.length - 1].content) : null;
+      suggestions = lastTurn?.followUps ?? content?.followUps ?? [];
+      // Hide suggestions the group has already asked in this thread.
+      const asked = new Set(laterStudent.map((l) => l.content.trim().toLowerCase()));
+      suggestions = suggestions.filter((q) => !asked.has(q.trim().toLowerCase()));
+    }
+    const input = isReflection && firstStudent ? parseReflectionInput(firstStudent.content) : null;
+    const allAi = [firstAi, ...laterAi].filter(Boolean) as PromptLogDTO[];
+
+    return (
+      <div key={item.entry.id} className="space-y-3">
+        {input && firstStudent ? (
+          <>
+            <SessionNotesCard
+              name={firstStudent.studentName}
+              person={styleFor(firstStudent.studentName)}
+              at={item.entry.createdAt}
+              summary={input.summary}
+              keyPoints={content?.keyPoints ?? []}
+            />
+            <QuestionCard
+              name={firstStudent.studentName}
+              person={styleFor(firstStudent.studentName)}
+              action="asked"
+              at={firstStudent.createdAt}
+              text={input.question}
+            />
+            {content?.tutorReply && <TutorBubble text={content.tutorReply} />}
+          </>
+        ) : (
+          <>
+            {firstStudent &&
+              (item.entry.type === "NEWS_UPDATE" ? (
+                <QuestionCard
+                  name={firstStudent.studentName}
+                  person={styleFor(firstStudent.studentName)}
+                  action="pasted news for the fortnightly update"
+                  at={firstStudent.createdAt}
+                  text={firstStudent.content}
+                />
+              ) : (
+                <PromptLogCard log={firstStudent} />
+              ))}
+            <EntryCard entry={item.entry} />
+          </>
+        )}
+        {laterStudent.map((l, i) => {
+          const turn = laterAi[i] ? parseTurn(laterAi[i].content) : null;
+          return (
+            <div key={l.id} className="space-y-3">
+              <QuestionCard
+                name={l.studentName}
+                person={styleFor(l.studentName)}
+                action="asked a follow-up"
+                at={l.createdAt}
+                text={l.content}
+              />
+              {turn && <TutorBubble text={turn.tutorReply} />}
+            </div>
+          );
+        })}
+        {allAi.length > 0 && (
+          <details className="text-sm">
+            <summary className="text-xs text-gray-500 cursor-pointer">
+              Raw AI response{allAi.length > 1 ? `s (${allAi.length})` : ""}
+            </summary>
+            <div className="mt-2 space-y-2">
+              {allAi.map((l) => (
+                <PromptLogCard key={l.id} log={l} />
+              ))}
+            </div>
+          </details>
+        )}
+        {isReflection && (
+          <FollowUpBox
+            suggestions={suggestions}
+            disabled={!!busy}
+            sending={busy === "followup" && followUpFor === item.entry.id}
+            onSend={(text) => askFollowUp(item.entry.id, text)}
+          />
+        )}
+      </div>
+    );
+  }
 
   async function post(kind: "reflection" | "news" | "note" | "followup", url: string, payload: object) {
     setError(null);
@@ -371,6 +618,9 @@ export default function DashboardClient({
   return (
     <main className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-3xl mx-auto">
+        <p className="mb-2">
+          <BackButton href={back.href} label={back.label} />
+        </p>
         <h1 className="text-2xl font-bold text-gray-900 mb-1">{group.name}</h1>
         <p className="text-sm text-gray-500 mb-6">
           Share this link and the passcode with group members:{" "}
@@ -471,63 +721,38 @@ export default function DashboardClient({
           {error && <p className="text-red-600 text-sm">{error}</p>}
         </div>
 
-        <h2 className="text-lg font-semibold text-gray-900 mb-3">
+        <h2 className="text-lg font-semibold text-gray-900 mb-2">
           Group history{" "}
           {feed.length === 0 && <span className="font-normal text-gray-500">(empty)</span>}
         </h2>
-        <div className="space-y-6">
-          {feed.map((item) => {
-            if (item.kind === "note") return <EntryCard key={item.entry.id} entry={item.entry} />;
-            if (item.kind === "log") return <PromptLogCard key={item.log.id} log={item.log} />;
-            // First student/AI pair is the original turn; later pairs are follow-ups.
-            const [firstStudent, ...laterStudent] = item.student;
-            const [firstAi, ...laterAi] = item.ai;
-            const isReflection = item.entry.type === "REFLECTION";
-            let suggestions: string[] = [];
-            if (isReflection) {
-              const lastTurn = laterAi.length ? parseTurn(laterAi[laterAi.length - 1].content) : null;
-              try {
-                suggestions =
-                  lastTurn?.followUps ??
-                  ((JSON.parse(item.entry.content) as ReflectionContent).followUps ?? []);
-              } catch {
-                suggestions = [];
-              }
-            }
-            const rawAi = (l: PromptLogDTO) => (
-              <details key={`raw-${l.id}`} className="text-sm">
-                <summary className="text-xs text-gray-500 cursor-pointer">Raw AI response</summary>
-                <PromptLogCard log={l} />
-              </details>
-            );
-            return (
-              <div key={item.entry.id} className="space-y-2">
-                {firstStudent && <PromptLogCard log={firstStudent} />}
-                <EntryCard entry={item.entry} />
-                {firstAi && rawAi(firstAi)}
-                {laterStudent.map((l, i) => {
-                  const ai = laterAi[i];
-                  const turn = ai ? parseTurn(ai.content) : null;
-                  return (
-                    <div key={l.id} className="space-y-2">
-                      <PromptLogCard log={l} />
-                      {ai && turn && <TutorBubble text={turn.tutorReply} />}
-                      {ai && rawAi(ai)}
-                    </div>
-                  );
-                })}
-                {laterAi.slice(laterStudent.length).map(rawAi)}
-                {isReflection && (
-                  <FollowUpBox
-                    suggestions={suggestions}
-                    disabled={!!busy}
-                    sending={busy === "followup" && followUpFor === item.entry.id}
-                    onSend={(text) => askFollowUp(item.entry.id, text)}
-                  />
-                )}
+        {feed.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-4">
+            {LEGEND.map(([label, cls]) => (
+              <span key={label} className={`text-xs px-2 py-1 rounded border ${cls}`}>
+                {label}
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="space-y-8">
+          {sessions.map((block) => (
+            <section key={block.key} className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+              <header className="bg-slate-800 px-4 py-3 text-white flex flex-wrap items-center gap-x-3 gap-y-2">
+                <h3 className="text-base font-semibold">{block.title}</h3>
+                {block.subtitle && <span className="text-sm text-slate-300">{block.subtitle}</span>}
+                <span className="sm:ml-auto flex flex-wrap gap-1.5">
+                  {block.people.map(([name, n]) => (
+                    <span key={name} className={`text-xs font-medium px-2 py-0.5 rounded-full ${styleFor(name).chip}`}>
+                      {name} · {n}
+                    </span>
+                  ))}
+                </span>
+              </header>
+              <div className="p-4 space-y-6 bg-gray-50">
+                {block.items.map((item) => renderItem(item))}
               </div>
-            );
-          })}
+            </section>
+          ))}
           {feed.length === 0 && (
             <p className="text-gray-500 text-sm">
               No entries yet — run a reflection, paste news, or add a note above.

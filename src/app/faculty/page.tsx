@@ -1,4 +1,5 @@
 import Link from "next/link";
+import BackButton from "@/components/BackButton";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireFaculty } from "@/lib/auth";
@@ -16,10 +17,8 @@ export default async function FacultyPage() {
   return (
     <main className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-3xl mx-auto">
-        <p className="text-sm mb-1">
-          <Link href="/" className="text-blue-600 hover:underline">
-            ← Home
-          </Link>
+        <p className="mb-1">
+          <BackButton href="/" label="Home" />
         </p>
         <h1 className="text-2xl font-bold text-gray-900 mb-6">Faculty — All Groups</h1>
 

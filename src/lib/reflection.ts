@@ -26,3 +26,14 @@ export function validateTutorTurn(obj: unknown): TutorTurn {
   }
   return { tutorReply: tutorReply.trim(), followUps: (followUps as string[]).map((f) => f.trim()) };
 }
+
+const SUMMARY_HEAD = "Class summary:\n";
+const QUESTION_HEAD = "\n\nQuestion we couldn't get clarified:\n";
+
+/** Inverse of formatReflectionInput: split a STUDENT log back into its two fields, or null. */
+export function parseReflectionInput(text: string): { summary: string; question: string } | null {
+  if (!text.startsWith(SUMMARY_HEAD)) return null;
+  const i = text.indexOf(QUESTION_HEAD);
+  if (i === -1) return null;
+  return { summary: text.slice(SUMMARY_HEAD.length, i), question: text.slice(i + QUESTION_HEAD.length) };
+}

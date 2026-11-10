@@ -25,3 +25,30 @@ export function formatDate(iso: string): string {
   const hour12 = h % 12 === 0 ? 12 : h % 12;
   return `${get("day")} ${MONTHS[get("month") - 1]} ${get("year")}, ${hour12}:${minute} ${h < 12 ? "am" : "pm"} IST`;
 }
+
+/** IST calendar day of an ISO timestamp. */
+function istDay(iso: string): { y: number; m: number; d: number } {
+  const parts = PARTS.formatToParts(new Date(iso));
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+  return { y: get("year"), m: get("month"), d: get("day") };
+}
+
+/** e.g. "19 Aug 2026" (IST date only). */
+export function formatDay(iso: string): string {
+  const { y, m, d } = istDay(iso);
+  return `${d} ${MONTHS[m - 1]} ${y}`;
+}
+
+/** Monday of the IST week containing the timestamp, as "YYYY-MM-DD" (a stable grouping key). */
+export function istWeekKey(iso: string): string {
+  const { y, m, d } = istDay(iso);
+  const day = new Date(Date.UTC(y, m - 1, d));
+  day.setUTCDate(day.getUTCDate() - ((day.getUTCDay() + 6) % 7));
+  return day.toISOString().slice(0, 10);
+}
+
+/** "YYYY-MM-DD" week key → "17 Aug 2026". */
+export function formatWeekKey(key: string): string {
+  const [y, m, d] = key.split("-").map(Number);
+  return `${d} ${MONTHS[m - 1]} ${y}`;
+}
